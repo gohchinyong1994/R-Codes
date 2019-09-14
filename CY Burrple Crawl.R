@@ -6,15 +6,16 @@ library(httr)
 library(stringr)
 library(rjson)
 
-#df <- burScrapCategory(category = 'Cafes & Coffee',
- #                      host = 'https://www.burpple.com',
-  #                     country = 'SG',
-   #                    maxLoadMoreComments = 15,
-    #                   maxLoadMorePlaces = 100,
-     #                  csvName = "burScrap.csv",
-      #                 verbose = T)
-
-#df <- read.csv("burScrap.csv")
+# Run these 2 lines after running all the below functions to test the code
+# Rolling append feature to CSV in case code fails to connect halfway
+df <- burScrapCategory(category = 'Cafes & Coffee',
+                       host = 'https://www.burpple.com',
+                       country = 'SG',
+                       maxLoadMoreComments = 15,
+                       maxLoadMorePlaces = 100,
+                       csvName = "burScrap.csv",
+                       verbose = T)
+df <- read.csv("burScrap.csv")
 
 
 # MAIN FUNCTION: burScrapCategory()
