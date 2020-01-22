@@ -1,0 +1,1404 @@
+---
+title: "DBA3803/DSC3216 Group Project"
+author: "Group 16"
+date: "21 October 2019"
+output: 
+  html_document:
+    toc: TRUE
+    toc_depth: 4
+---
+
+**DBA3803/DSC3216 Group Project**
+
+Group 16:
+
+Goh Chin Yong, A0139748M
+Lim Wei Yang, A0167212M
+Ng Joo Kang, A0167730A
+
+**Business Problem**
+
+We are a budding real-estate company that is looking to enter the Iowa real-estate market. We are currently looking to obtain a sizeable portfolio of houses, but we are not sure of what is the right price to quote when sending our agents to buy houses. As such, we are in the process of coming up with a model which is able to predict the prices as close as the actual sale prices in which clients will be willing to sell them for. We've collected data on 1460 prior housing sales in the neighbourhood for the past few years, and we'll be conducting Analysis and Regression modelling on them in order to more accurately quote our clients' houses.
+
+
+**Data Source**
+
+We'll be using the dataset provided from this Kaggle Data Competition - 'House Prices - Advanced Regression Techniques'.
+
+The url is "https://www.kaggle.com/c/house-prices-advanced-regression-techniques/overview".
+
+We'll only be utilising the "train.csv" from the Kaggle dataset, which contains 1460 rows of 81 columns. We'll be referencing to "data_descriptions.txt" which provides an in-depth description and explanation into each of the 81 variables listed in the dataset.
+
+
+**Objective**
+
+The objective of our project will be to minimise expected loss, using the prediction model that we have chosen at the end of our data analysis. We'll do this through a Scenario Testing at the end.
+
+
+**Managerial Decisions**
+
+Stakeholders can apply our prediction model on future house sales in the town of Iowa, and they can make use of the results to more effectively price houses.
+
+The prediction model is customisable - stakeholders will be able to customise it to other towns with similar provided inputs. Thus, the model will be able to be applied to other towns and neighbourhoods with a similar accuracy.
+
+
+**Our Group's Approach**
+
+The report will be broken down into 11 parts:
+
+1) Initialisation
+
+Loading required libraries and reading the data, as well as an initial look into the structure of the dataframe.
+
+2) Data Cleaning
+
+While understanding and analysing the dataframe, we'll be cleaning the dataset as well. We'll be removing unneeded variables, cleaning up NA values, categorising the variables properly, etc.
+
+3) Data Reshaping
+
+After the initial data cleaning and exploration in Section 2), we'll be deep-diving into the more important variables in this section. We'll be reshaping the data according to explored and observed relationships, while also constructing new, more useful variables.
+
+5) and 6) Data Visualizations of Numerical and Categorical Variables
+
+In the 2 sections, we'll be visualizing various predictor variables in order to understand their importance and quirks, if any. We'll then reshape and draw insights from them accordingly.
+
+7) Prediction Modelling
+
+And finally, we'll be creating our various models in this section. We'll be implementing 4 models: 
+
+1. Multi-regression
+
+2. Regression Tree
+
+3. Random Forest
+
+4. Extreme Gradient Boosting (XGBoost)
+
+8) Model Evaluations
+
+We'll evaluate all 4 models based on their accuracy (R-squared), and error rate (Root Mean Squared Logarithmic Error).
+
+9) Scenario Testing
+
+After evaluating the models, we'll then apply them to our business problem through a scenario testing analysis, calculating expected losses and comparing the losses between each model.
+
+10) Limitations
+
+We discuss the limitations of both our models and our dataset in this section.
+
+11) Conclusion
+
+And finally, we conclude our report in this section.
+
+
+**Project Analysis Code**
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Initialisation
+
+### 1.1 Loading libraries
+
+```{r message=F, warning=F}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(party)
+library(randomForest)
+library(knitr)
+library(rminer)
+library(reshape2)
+library(MLmetrics)
+library(tidyr)
+library(scales)
+library(corrplot)
+library(gridExtra)
+library(moments)
+library(caret)
+library(xgboost)
+library(gbm)
+```
+
+### 1.2 Reading data
+
+An initial look into the structure of the dataframe.
+
+```{r results='hold'}
+df <- read.csv("train.csv")
+str(df)
+```
+
+We have a total of 81 variables, including the Target Variable SalePrice.
+
+
+## 2. Data Cleaning
+
+### 2.1 Removing the ID variable as rows are already numbered
+
+The ID variable may affect our prediction models' predictions.
+
+```{r}
+df$Id <- NULL
+```
+
+### 2.2 Dealing with categorical variables incorrectly formatted as numeric  
+
+We found that there is one variable, MSSubClass, that is formatted wrongly as numeric instead of categorical. From data_descriptions, we see that MSSubClass represents the ID of the type of housing, with each ID representing a different type of housing, such as '20' representing a housing that is a 1-storey building, built after 1946. 
+  
+We will convert this variable into an unordered factor to more correctly reflect this classification.
+
+``` {r}
+df[,'MSSubClass'] <- df[,'MSSubClass'] %>% as.factor()
+df['MSSubClass'] %>% summary
+```
+
+### 2.3 Dealing with categorical factors
+
+Let's take a closer look at the categorical factors.
+
+``` {r }
+df %>% select_if(is.factor) %>% summary()
+```
+
+All of the categorical variables describe a specific feature of the house with varying number of levels (i.e. PoolQC describes the quality of the house's pool). 
+
+However, some of these variables contain NA's, which indicate that that particular categorical variable does not apply to the house in question. 
+
+Taking another look at data_description.txt, we see that 'NA' for most of the variables mean that the house does not have that particular feature. For example, PoolQC indicates whether the house's pool quality is negative, or positve. NA's indicate that the house doesn't have a pool, and hence there is no pool quality.
+
+Another interesting observation we found was that the Utilities variable only has two factors, and there's only one observation on NoSeWa, with the other 1459 as AllPub. This thus tells us that the Utilities variable would not be as useful as a predictor variable, and consequently, it is acceptable to get rid of it.
+
+### 2.4 Removing the Utilities variable
+
+```{r}
+df$Utilities <- NULL
+```
+
+
+Let's take a closer look at the categorical variables with NA so we can better ascertain the course of action to take for the NA values.
+
+### 2.5 Picking categorical variables with NA
+
+```{r}
+# Picking out the categorical variables
+catVars <- df[which(sapply(df, is.factor))]
+ncol(catVars) # We have 43 categorical variables
+
+sort(colSums(sapply(catVars[which(colSums((is.na(catVars))) > 0)], is.na)), decreasing = TRUE)
+```
+
+We have 43 different categorical variables.
+
+Out of the 43 different categorical variables, 16 of them has NA values. 
+
+For each of the 16 variables, we refer to data_descriptions for a better understanding of what NA means. 
+
+Out of the 16 variables, only MasVnrType and Electrical has no explanation for what 'NA' stands for, whereas for the other 14, 'NA' means that the house does not have that particular feature. Hence, they can be easily fixed by changing 'NA' to 'None'.
+
+Let's take a closer look at MasVnrType and Electrical, and fix their NA values, before fixing the other 14 variables.
+
+
+### 2.6 A closer look at MasVnrType
+
+MasVnrType describes the type of veneer area, if any. There are 5 factors, with None as one of them. 
+
+A summary tells us that there are only 8 NA's, and there are actually 864 existing variables with no veneer area. 
+
+```{r}
+summary(df$MasVnrType)
+```
+
+Looking closer at the rows with NA tells us that their corresponding MasVnrArea is NA as well. This indicates that we can safely change the 'NA's to 'None'. We'll also change the NA's in MasVnrArea to 0, since if the house does not have a veneer area, the area should be 0.
+
+```{r}
+df[is.na(df$MasVnrType), c("MasVnrType", 'MasVnrArea')]
+df$MasVnrType[is.na(df$MasVnrType)] <- 'None'
+df$MasVnrArea[is.na(df$MasVnrArea)] <-  0
+```
+
+### 2.7 A closer look at Electrical
+
+Since there is only 1 NA value, and it is quite unorthodox for a house to be sold without any electrical system at all, we'll impute the NA value with the mode, which from looking at the summary, is SBrkr.
+
+```{r}
+summary(df$Electrical)
+df$Electrical[is.na(df$Electrical)] <- 'SBrkr'
+```
+
+
+Now that we've fixed MasVnrType and Electrical, we'll move on to fixing the other 14 categorical variables.
+
+### 2.8 Fixing NA in categorical variables
+
+``` {r }
+  # Replace all NAs in factors with "None"
+  for (column in names(which(colSums(is.na(catVars)) > 0))) {
+    df[,column] <- df[,column] %>% as.character() %>% replace_na("None") %>% as.factor()
+  }
+  
+  df %>% select_if(is.factor) %>% summary()
+```
+
+### 2.9 Dealing with ordered categorical factors
+
+Analysing data_descriptions further, We have identified 15 factors which are meant to be ordered as per below:
+
+``` {r }
+  # We need to order them
+  # These categorical factors are meant to be ordered
+  df[c('ExterQual','ExterCond','BsmtQual', 'BsmtCond', 'BsmtExposure', 'BsmtFinType1', 'BsmtFinType2', 'HeatingQC',
+       'KitchenQual', 'Functional', 'FireplaceQu', 'GarageFinish', 'GarageQual', 'GarageCond',
+       'PoolQC')] %>% summary
+```
+  
+We will order and arrange them manually according to data_description.txt.
+
+``` {r }
+  # Convert categorical factors into ordered factors for the above columns
+  df[,'ExterQual'] <- df[,'ExterQual'] %>% ordered(levels = c('Po', 'Fa', 'TA', 'Gd', 'Ex'))
+  df[,'ExterCond'] <- df[,'ExterCond'] %>% ordered(levels = c('Po', 'Fa', 'TA', 'Gd', 'Ex'))
+  
+  # For basement (5 ordered categorical columns), NAs represent no basement, we will convert them into "None" for these factors
+  df[,'BsmtQual'] <- df[,'BsmtQual'] %>% ordered(levels = c('None', 'Po', 'Fa', 'TA', 'Gd', 'Ex'))
+  df[,'BsmtCond'] <- df[,'BsmtCond'] %>% ordered(levels = c('None', 'Po', 'Fa', 'TA', 'Gd', 'Ex'))
+  df[,'BsmtExposure'] <- df[,'BsmtExposure'] %>% ordered(levels = c('None', 'No', 'Mn', 'Av', 'Gd'))
+  df[,'BsmtFinType1'] <- df[,'BsmtFinType1'] %>% ordered(levels = c('None', 'Unf', 'LwQ', 'Rec', 'BLQ', 'ALQ', 'GLQ'))
+  df[,'BsmtFinType2'] <- df[,'BsmtFinType2'] %>% ordered(levels = c('None', 'Unf', 'LwQ', 'Rec', 'BLQ', 'ALQ', 'GLQ'))
+  
+  
+  df[,'HeatingQC'] <- df[,'HeatingQC'] %>% ordered(levels = c('Po', 'Fa', 'TA', 'Gd', 'Ex'))
+  df[,'KitchenQual'] <- df[,'KitchenQual'] %>% ordered(levels = c('Po', 'Fa', 'TA', 'Gd', 'Ex'))
+  df[,'Functional'] <- df[,'Functional'] %>% ordered(levels = c('Sal', 'Sev', 'Maj2', 'Maj1', 'Mod', 'Min2', 'Min1', 'Typ'))
+  
+  # For fireplace (1 ordered categorical column), no fireplace means NA, we will replace with "None" and order them as worst
+  df[,'FireplaceQu'] <- df[,'FireplaceQu'] %>% ordered(levels = c('None', 'Po', 'Fa', 'TA', 'Gd', 'Ex'))
+  
+  # For garage (3 ordered categorical columns), no garage means NA, replace with "None" as well
+  df[,'GarageFinish'] <- df[,'GarageFinish'] %>% ordered(levels = c('None', 'Unf', 'RFn', 'Fin'))
+  df[,'GarageQual'] <- df[,'GarageQual'] %>% ordered(levels = c('None', 'Po', 'Fa', 'TA', 'Gd', 'Ex'))
+  df[,'GarageCond'] <- df[,'GarageCond'] %>% ordered(levels = c('None', 'Po', 'Fa', 'TA', 'Gd', 'Ex'))
+  
+  # For pool (1 ordered categorical column), no pool means NA, replace with "None" as well
+  df[,'PoolQC'] <- df[,'PoolQC'] %>% ordered(levels = c('None', 'Fa', 'TA', 'Gd', 'Ex'))
+  
+  # Check for any more NAs
+  df[c('ExterQual','ExterCond','BsmtQual', 'BsmtCond', 'BsmtExposure', 'BsmtFinType1', 'BsmtFinType2', 'HeatingQC',
+       'KitchenQual', 'Functional', 'FireplaceQu', 'GarageFinish', 'GarageQual', 'GarageCond',
+       'PoolQC')] %>% summary
+```
+
+Now that our categorical variables are factored and ordered properly, and the NA's are cleaned, we'll now move on to the numerical variables.
+
+### 2.10 Converting YrSold and MoSold into factors
+
+Although these 2 variables are numerical variables, but it makes sense for them to be factored, as they can tell us the trend over years and months.
+
+```{r }
+unique(df$YrSold) # Tells us that there are only 5 levels of YrSold
+unique(df$MoSold) # As we expected, 12 levels of MoSold (12 months)
+
+df$YrSold <- as.factor(df$YrSold)
+df$MoSold <- as.factor(df$MoSold)
+```
+
+
+### 2.11 Analysing numerical variables
+
+We'll take a closer look at the numerical variables to see if there's any cleaning or modifications we need to do.
+
+```{r}
+df %>% select_if(is.numeric) %>% summary
+```
+
+We see that there are only 2 variables with NA's - LotFrontage and GarageYrBlt. For LotFrontage, an NA indicates that there is no street connected to the property, hence an NA makes sense. For GarageYrBlt, an NA indicates that there is no Garage built, hence an NA makes sense. Although the NA's don't look very nice, but since they make sense in the data, we won't be fixing them.
+
+### 2.12 Summary of final cleaned data
+
+``` {r}
+# 1460 final rows
+df %>% nrow()
+df %>% summary
+```
+
+## 3. Data Reshaping
+
+In this part, we will introduce new variables which are able to potentially tell us more about each house.
+
+### 3.1 Age and isRemodelled
+
+Given the YrSold, YearBuilt and YearRemodAdd variables, we can reshape the data to tell us more about the Age of the house, and whether it has been through remodelling.  
+  
+YearBuilt: Original construction date  
+YearRemodAdd: Remodel date (same as YearBuilt if there are no remodeling or additions)  
+  
+``` {r }
+# Have to convert the factor back to numeric
+df$Age <- df$YrSold %>% as.character() %>% as.numeric() - df$YearBuilt %>% as.character() %>% as.numeric()
+df$isRemodelled <- ifelse(df$YearBuilt == df$YearRemodAdd, 0, 1)
+```
+
+
+### 3.2 Area Analysis
+
+As can be seen below, there are 17 numerical area variables all formatted by square feet. The purpose of this portion is to break down the variables which will be useful to us and transform them into more meaningful variables.
+
+``` {r }
+areaCol <- c("LotArea",
+             "BsmtFinSF1", "BsmtFinSF2", "BsmtUnfSF", "TotalBsmtSF",
+             "X1stFlrSF", "X2ndFlrSF", "GrLivArea",
+             "LowQualFinSF", "GarageArea",
+             "WoodDeckSF", "OpenPorchSF", "EnclosedPorch", "3SsnPorch", "ScreenPorch",
+             "PoolArea", "MasVnrArea")
+areaCol
+```
+
+#### 3.2.1 GrLivingArea
+
+We'll first take a look at GrLivingArea. Referring to data_description.txt, it translates to 'Above Ground Living Area' in square feet.
+
+As can be seen below, GrLivArea is simply the sum of X1stFlrSF and X2ndFlrSF, which makes sense.
+
+``` {r }
+df %>% select(c("X1stFlrSF", "X2ndFlrSF", "GrLivArea")) %>% head(10)
+```
+
+Therefore, we should use GrLivArea and not X1stFlrSF or X2ndFlrSF for regression to prevent correlations.
+
+We can introduce a boolean variable (has2ndFlr) to indicate if a house has a 2nd story or not for consideration in regression.
+
+``` {r }
+df$has2ndFlr <- ifelse(df$X2ndFlrSF > 0, 1, 0)
+```
+
+
+#### 3.2.2 LowQualFinSF
+
+LowQualFinSF: Low quality finished square feet (all floors)
+
+``` {r }
+(df[,"LowQualFinSF"] > 0) %>% sum()
+(df[,"LowQualFinSF"] > 0) %>% sum() / nrow(df)
+
+ggplot(df, aes(x = LowQualFinSF, y = SalePrice)) + 
+  geom_point(col='dark blue') +
+  scale_y_continuous(labels=comma) +
+  stat_smooth(method ='auto') +
+  stat_smooth(method ='lm', color = "red") +
+  labs(title = "LowQualFinSF",
+       subtitle = "Most points are 0, minority have values above 0")
+```
+
+This numerical variable will not be useful in regression as only 26 rows lie above 0, which is only 1.7% of the entire dataset.
+
+Even if we exclude the zeros, we will not meet the base assumption of Central Limit Theorem (n >= 30). Hence, we'll take note that this variable will not be useful as a predictor.
+
+```{r}
+df %>% select(c('LowQualFinSF', 'X1stFlrSF', 'X2ndFlrSF'))
+```
+
+
+#### 3.2.3 Basement Area
+
+We can see from below that TotalBsmtSF is simply the sum of these 3 basement areas: BsmtFinSF1, BsmtFinSF2 and BsmtUnfSF.
+
+``` {r }
+df %>% select(c("BsmtFinSF1", "BsmtFinSF2", "BsmtUnfSF", "TotalBsmtSF")) %>% head(10)
+```
+
+This introduces unneccesary correlations. We can improve this by capturing the proportion of the basement that are unfinished with new variable. 
+
+
+``` {r }
+df$BsmtFinPct <- (df$BsmtFinSF1 + df$BsmtFinSF2) / df$TotalBsmtSF
+df$BsmtFinPct[is.na(df$BsmtFinPct)] <- 0
+
+ggplot(df, aes(BsmtFinPct)) + 
+  geom_histogram(binwidth=0.05, fill='blue') +
+  labs(title = "Basement Finished Percentage (BsmtFinPct)",
+       subtitle = "Proportion of finished basement to total basement")
+```
+
+We see that there is approximately 500 houses with either no basement, or an unfinished basement (which is as though there's no basement).
+
+BsmtFinSF1 and BsmtFinSF2 are simply areas broken up by type of usage, i.e. if the basement has 2 types of usages, BsmtFinSF2 will be more than 0.
+
+### 3.3 Bathrooms
+
+Individually, the bathroom variables (FullBath, HalfBath, BsmtFullBath, BsmtHalfBah) do now show high correlation with Sale Price. However, our group expects that consolidating all of them into one variable will show its importance. We'll create a new variable called Total Bathrooms.
+
+With reference to data_descriptions, a halfbath refers to a bathroom with only a sink and a toilet. Therefore, in calculating Total Bathrooms, we'll count half baths accordingly as 0.5 of a bathroom.
+
+```{r}
+df$TotalBaths = df$FullBath + 0.5*df$HalfBath + df$BsmtFullBath + 0.5*df$BsmtHalfBath
+
+ggplot(df, aes(x=as.factor(TotalBaths), y=SalePrice)) + geom_point(col='blue') + geom_smooth(method='lm', se=FALSE, col='red', aes(group=1)) + scale_y_continuous(breaks=seq(0, 800000, 100000), labels=comma) + xlab('Total Bathrooms')
+```
+
+We can observe that number of bathrooms are now decently positively correlated with sale price.
+
+### 3.4 RoofMatl
+
+RoofMatl contains a lot of types which might lead to issues during our prediction modelling later on. We'll resolve this by manually declaring the factor levels.
+
+```{r }
+df$RoofMatl %>% summary()
+
+df$RoofMatl <- df$RoofMatl %>% as.character %>%
+  factor(levels = c("ClyTile", "CompShg", "Metal", "Roll", "Tar&Grv", "WdShake", "WdShngl"))
+```
+
+
+### 3.5 Condition1, Condition2
+
+From data_description, we can see that Condition1 and Condition2 are simply columns to show whether a house is located near certain areas as defined below:
+
+Condition1: Proximity to various conditions
+Condition2: Proximity to various conditions (if more than one is present)
+   Artery: Adjacent to arterial street
+   Feedr: Adjacent to feeder street	
+   Norm: Normal	
+   RRNn: Within 200' of North-South Railroad
+   RRAn: Adjacent to North-South Railroad
+   PosN: Near positive off-site feature--park, greenbelt, etc.
+   PosA: Adjacent to postive off-site feature
+   RRNe: Within 200' of East-West Railroad
+   RRAe: Adjacent to East-West Railroad
+
+
+``` {r}
+df$Condition1 %>% summary()
+df$Condition2 %>% summary()
+```
+
+As such, we will create new dummy variables to encapsulate these information which can be better used in our prediction modelling, and remove these variables. We'll create new binary variables that tell us whether the house is close to the abovementioned features, or not (1 or 0).
+
+
+``` {r}
+df$Condition1 <- df$Condition1 %>% as.character()
+df$Condition2 <- df$Condition2 %>% as.character()
+
+# Pure dummies
+df$hasArtery <- ifelse(df$Condition1 == "Artery", 1, ifelse(df$Condition2 == "Artery", 1, 0))
+df$hasFeedr <- ifelse(df$Condition1 == "Feedr", 1, ifelse(df$Condition2 == "Feedr", 1, 0))
+
+# Grouped dummies
+df$hasRRe <- ifelse(df$Condition1 %in% c("RRNe","RRAe"), 1, ifelse(df$Condition2 %in% c("RRNe","RRAe"), 1, 0))
+df$hasRRn <- ifelse(df$Condition1 %in% c("RRNn","RRAn"), 1, ifelse(df$Condition2 %in% c("RRNn","RRAn"), 1, 0))
+df$hasPos <- ifelse(df$Condition1 %in% c("PosN","PosA"), 1, ifelse(df$Condition2 %in% c("PosN","PosA"), 1, 0))
+
+# Remove these conditions as they are unsuitable in all our models
+dfCondition1 <- NULL
+dfCondition2 <- NULL
+```
+
+## 4. Data Visualization: Numerical Variables
+
+### 4.1 Target Variable: SalePrice
+
+To better understand how the spread of SalePrice looks over the entire dataset, we will plot a histogram chart of it.
+
+```{r}
+df$SalePrice %>% is.na() %>% unique() # There are no NAs in SalePrice.
+
+summary(df$SalePrice)
+
+ggplot(df, aes(x = SalePrice)) + 
+  geom_histogram(aes(y = ..density..), fill = 'red', alpha = 0.5, binwidth=10000) +
+  scale_x_continuous(breaks=seq(0, 800000, 100000), labels=comma) +
+  geom_density(colour = 'blue') + 
+  xlab(expression(bold('SalePrice'))) + 
+  ylab(expression(bold('Density'))) +
+  labs(title = "Density Plot: SalePrice")
+```
+
+We can see that the sale prices are largely skewed to the left, with a majority of the houses selling between 120,000 and 220,000.
+
+This makes sense, as not many people can afford expensive housing.
+
+We also see that the data shows peakedness, particularly around 175,000.
+
+The tails of the distribution are significantly off from the peak, which indicates a significant kurtosis.
+
+``` {r }
+cat('Skewness: ', skewness(df$SalePrice))
+cat('\nKurtosis: ', kurtosis(df$SalePrice))
+```
+
+In order to better fix the skewness and kurtosis, we shall log transform SalePrice, and create a new variable SalePriceLog to reflect this transformation.
+
+``` {r }
+df$SalePriceLog <- log(df$SalePrice)
+```
+
+``` {r }
+ggplot(df, aes(x = SalePriceLog)) + 
+  geom_histogram(binwidth = 0.05, aes(y = ..density..), fill = 'red', alpha = 0.5) + 
+  geom_density(colour = 'blue') + 
+  xlab(expression(bold('SalePrice'))) + 
+  ylab(expression(bold('Density'))) +
+  labs(title = "Density Plot: SalePriceLog")
+```
+
+``` {r }
+skewness(df$SalePriceLog)
+kurtosis(df$SalePriceLog)
+```
+
+As can be seen above, there is much improvement in terms of both skewness and kurtosis, which will translate to more effective results when predicting.
+
+
+Next, we'll take a look at the correlation between each numeric variable and SalePrice in order to ascertain the significant predictors.
+
+### 4.2 Correlation Analysis
+
+```{r}
+# Picking out the numeric Variables and SalePrice
+numVars <- df[,which(sapply(df, is.numeric))]
+numVars = numVars[-34]
+
+# Correlations of each numeric variable to SalePrice
+numCors <- cor(numVars, use='pairwise.complete.obs')
+
+# Sorting the correlations by their correlation with SalePrice
+numCorsSorted <- sort(numCors[, 'SalePriceLog'], decreasing=TRUE)
+
+# Picking out only the significant variables with correlation > 0.5
+varHighCorr <- names(which(numCorsSorted>0.5, TRUE))
+
+# Creating a new matrix with just the highly correlated variables
+numCorMtx <- numCors[varHighCorr, varHighCorr]
+
+# Plotting the correlation plot
+corrplot.mixed(numCorMtx, tl.col='black', tl.pos='lt')
+```
+
+We can see that there are 10 numeric variables that are very correlated with SalePrice (correlation > 0.5), and all of them are postively correlated, indicating that if one of the numeric variables increase, Sale Price is likely to increase.
+
+However, we can also see that some of the variables are also highly correlated with each other, indicating an issue of multicollinearity. 
+
+Of note are GarageArea (Size of Garage in sqft) and GarageCars (Size of Garage in car capacity) with a correlation of 0.88, X1stFlrSF (Size of 1st floor in sqft) and TotalBsmtSF (Size of basement in sqft) with a correlation of 0.82, and TotRmsAbvGrd (Number of rooms above ground) and GrLivArea (Area of above-ground living area in sqft) with a correlation of 0.83.
+
+From the descriptions of the variables above alone, it makes sense that they will be highly correlated. For e.g., the size of a garage can be calculated in sqft, but it can also be calculated in terms of number of cars.
+
+First, we'll take a closer look at the 2 most important variables: OverallQual and GrLivArea.
+
+### 4.3 A closer look at OverallQual
+
+OverallQual refers to the rating of the overall material and finishing of the house. It makes sense that if the rating of the materials and finishing is high, sale price should be high as well.
+
+```{r}
+ggplot(df, aes(x=factor(OverallQual), y=SalePrice)) +
+  geom_boxplot(color='blue') + labs(x='Overall Quality') + 
+  scale_y_continuous(breaks=seq(0, 800000, 100000), labels = comma)
+```
+
+We see that there as a clear positive relationship between the overall quality of the house and its sale price. As quality increases, sale price increases. Hence, the high correlation can be visually seen from this graph.
+
+Although some of the quality levels have quite a wide spread of sale prices, we don't find any obvious outliers.
+
+Since OverallQual seems to be the most correlated with SalePrice, we'll do an initial exploration into the interaction between SalePrice and OverallQual.
+
+``` {r}
+p1 <- ggplot(df, aes(x = OverallQual, y=SalePrice)) + 
+  geom_point() +
+  stat_smooth(method ='auto') +
+  stat_smooth(method ='lm', color = "red") +
+  labs(title = "Linear Regression:",
+       subtitle = "SalePrice ~ OverallQual")
+
+p2 <- ggplot(df, aes(x = OverallQual^2, y=SalePrice)) + 
+  geom_point() +
+  stat_smooth(method ='auto') +
+  stat_smooth(method ='lm', color = "red") +
+  labs(title = "Quadratic Regression:",
+       subtitle = "SalePrice ~ OverallQual ^ 2")
+
+grid.arrange(p1,p2,nrow=1)
+```
+
+We can also observe that OverallQual exhibits a quadratic relationship to SalePrice. From the above plot, we can see the blue line (geom_smooth using method = "gam") and the red line (geom_smooth using method = "lm") coincides more smoothly for the quadratic regression.
+
+### 4.4 A closer look at GrLivArea
+
+GrLivArea refers to the area, in square feet, of the living area above ground. It also makes sense that if the house has a large above-ground living area, the house should be fairly expensive.
+
+```{r}
+ggplot(df, aes(x=GrLivArea, y=SalePrice)) +
+  geom_point(color='blue') + geom_smooth(method='lm', color='red') +
+  scale_y_continuous(breaks=seq(0, 800000, 100000), labels=comma) +
+  labs(x='Above Ground Living Area')
+```
+
+We see that there is also a clear positive trend here between sale price and above ground living area, thereby visually proving the correlation. 
+
+However, we can see two outlier points here. Although their above ground living area is quite high (> 4500sqft), but their sale price is abnormally low ( < 250,000). Although we won't be taking them out of the dataset yet as there could be other factors that might explain their low saleprice, we'll take note of the two points first.
+
+```{r}
+which(df$GrLivArea>4500 & df$SalePrice<250000, arr.ind=TRUE)
+```
+
+We find that the two outliers are Row Number 524, and 1299.
+
+
+### 4.5 Age and isRemodelled
+
+Next, we'll take a look at the interaction of Age and isRemodelled with Sale Price.
+
+``` {r} 
+ggplot(df, aes(x = Age, y = SalePrice)) +
+  geom_point() +
+  scale_y_continuous(labels=comma) +
+  stat_smooth(method ='auto', color = 'blue') +
+  stat_smooth(method ='lm', color = "red") +
+  facet_wrap(~isRemodelled) +
+  labs(title = "Linear Smooth:",
+       subtitle = "0 for no remodelling, 1 for remodelled")
+```
+
+We find that no matter whether a house has been remodelled before or not, there is a general downward trend with Age. As the house gets older, its sale price decreases. 
+ 
+As the Age increases past 90, the sale price looks like it's hitting a limit. This makes sense as no matter how old the house is, it shouldn't be selling for dirt cheap (less than 100,000) as the owner won't be profiting off of it then.
+
+Overall, we can conclude that sale price decreases with age, and hits a limit past 90.
+ 
+``` {r fig.width=12, fig.height=8}
+p1 <- ggplot(df, aes(x = Age, y = SalePrice)) +
+  geom_point(col='grey') +
+  scale_y_continuous(labels=comma) +
+  stat_smooth(method ='auto') +
+  stat_smooth(method ='lm', color = "red") +
+  facet_wrap(~isRemodelled, scales = "free") +
+  labs(title = "Linear Regression: SalePrice ~ Age",
+       subtitle = "0 for no remodelling, 1 for remodelled")
+
+p2 <- ggplot(df, aes(x = Age ^ 0.5, y = SalePrice)) +
+  geom_point(col='grey') +
+  scale_y_continuous(labels=comma) +
+  stat_smooth(method ='auto') +
+  stat_smooth(method ='lm', color = "red") +
+  facet_wrap(~isRemodelled, scales = "free") +
+  labs(title = "Square Root Regression: SalePrice ~ Age ^ (1/2)",
+       subtitle = "0 for no remodelling, 1 for remodelled")
+
+grid.arrange(p1,p2,nrow=2)
+```
+
+We discovered that there is a square root relationship between Age and SalePrice as seen in the above plots. Transforming age by square-rooting it improves the linear smoothing.
+
+
+``` {r echo = F}
+cat("Correlation(SalePrice, Age): " ,cor((df$Age),df$SalePrice))
+cat("\nCorrelation(SalePrice, Age ^ 0.5): " ,cor((df$Age ^ 0.5),df$SalePrice))
+```
+
+Comparing on correlation, we can see that square-rooting Age increases its  correlation with SalePrice by about 5%.
+
+### 4.6 Porches
+
+We noticed that there are many variables regarding porches, and we wonder why are there so many variables about them. Let's take a look at all of them.
+
+WoodDeckSF: Wood deck area in square feet
+OpenPorchSF: Open porch area in square feet
+EnclosedPorch: Enclosed porch area in square feet
+X3SsnPorch: Three season porch area in square feet
+ScreenPorch: Screen porch area in square feet
+
+Based on surface research, Wood deck is a porch without any roofing, and the other types of porches are just different porch types. A house can have various different porches that are of different types. We will aggregate them by summing their area into a new variable TotalPorchSF to analyse it later.
+
+```{r}
+df$TotalPorchSF <- df$WoodDeckSF + df$OpenPorchSF + df$EnclosedPorch + df$X3SsnPorch + df$ScreenPorch
+cor(df$TotalPorchSF, df$SalePriceLog)
+ggplot(df, aes(x=TotalPorchSF, y=SalePrice)) + geom_point(col='blue') + geom_smooth(method='lm', col='red', aes(group=1))
+```
+
+
+## 5. Data Visualization: Categorical Variables
+
+### 5.1 Neighborhood
+
+We're interested to find out how Neighbourhood affects sale prices. We expect it to differ highly between neighbourhoods - high-end neighbourhoods should have more expensive houses, and vice versa.
+
+``` {r }
+ggplot(df, aes(x = Neighborhood, y = SalePrice)) +
+  geom_boxplot(aes(color = Neighborhood)) +
+  scale_y_continuous(labels=comma) +
+  labs(title = "Sale Price in different Neighborhoods") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = 'None')
+```
+
+As expected, we see that there is a wide variation of Sale Prices amongst the neighbourhoods. Some neighbourhoods have a wider spread, some have a very tight spread. Examples are NoRidge, which has a few points that are sold at prices more than 600,000, and NPkVIII, which has a very tight spread, indicating houses in that neighbourhood are consistently sold around that price.
+
+We can conclude that Neighbourhood will be a potential important predictor variable for our prediction models.
+
+However, due to the significantly high number of different neighbourhoods (25 neighbourhoods), our group feels it introduces an unnecessary complexity to the data which will affect our prediction modelling. We'll look into visualizing the median and mean saleprices across all the neighbourhoods and then attempt to bin them more generally.
+
+```{r}
+# Visualization for median sale price
+medianbin <- ggplot(df, aes(x=reorder(Neighborhood, SalePrice, FUN=median), y=SalePrice)) + 
+  geom_bar(stat='summary', fun.y = "median", fill='blue') + labs(x='Neighbourhood', y='Median SalePrice') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(breaks= seq(0, 800000, by=50000), labels = comma) +
+  geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=3) +
+  geom_hline(yintercept=median(df$SalePrice), linetype="dashed", color = "red") 
+
+# Visualization for mean sale price
+meanbin <- ggplot(df, aes(x=reorder(Neighborhood, SalePrice, FUN=mean), y=SalePrice)) + 
+  geom_bar(stat='summary', fun.y = "mean", fill='blue') + labs(x='Neighbourhood', y="Mean SalePrice") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(breaks= seq(0, 800000, by=50000), labels = comma) +
+  geom_label(stat = "count", aes(label = ..count.., y = ..count..), size=3) +
+  geom_hline(yintercept=mean(df$SalePrice), linetype="dashed", color = "red")
+
+grid.arrange(medianbin, meanbin)
+```
+
+We can observe that both plots on the mean and median sale prices agree on the extreme 3 neighbourhoods on both sides of the spectrum. From this, we can bin the neighbourhoods into 3 more general categories:
+
+Poor: MeadowV, IDOTRR, BrDale (0)
+Rich: StoneBr, NoRidge, NridgHt (2)
+Average: Everything else (1)
+
+We'll do one-hot encoding instead of categorising the new variable.
+
+```{r}
+df$NghbrhdCat[df$Neighborhood %in% c('StoneBr', 'NoRidge', 'NridgHt')]  <-  2
+df$NghbrhdCat[df$Neighborhood %in% c('MeadowV', 'IDOTRR', 'BrDale')] <- 0
+df$NghbrhdCat[!df$Neighborhood %in% c('MeadowV', 'IDOTRR', 'BrDale', 'StoneBr', 'NoRidge', 'NridgHt')] <- 1
+df$NghbrhdCat <- as.factor(df$NghbrhdCat)
+table(df$NghbrhdCat)
+```
+
+### 5.2 MSSubClass
+
+Next, we'll take a look at MSSubClass. From data_descriptions, MSSubClass describes the type of dwelling involved in the sale, with 16 different factors indicating a different type of house. 
+
+We expect sale price to vary between different MSSubClasses too. Houses with a MSSubClass indicating a high-end house (e.g. 2-1/2 Storey) are definitely worth more than a small house (e.g. 1-storey).
+
+``` {r }
+ggplot(df, aes(x = MSSubClass, y = SalePrice)) +
+  geom_boxplot(aes(color = MSSubClass)) +
+  scale_y_continuous(labels=comma) +
+  labs(title = "Sale Price in different MSSubClasses",
+        subtitle = "MSSubClass: Identifies the type of dwelling involved in the sale.") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = 'None')
+
+```
+
+As expected, sale prices do differ between MSSubClasses, and by a lot as well. Again, we see that some classes have a wide spread (20, 60), and some has a tight spread (45).
+
+We can conclude that MSSubClass will be a potential important predictor variable in our prediction models later on.
+
+Across the MSSubClasses, as GrLivArea increases, SalePrice increases as well.
+
+``` {r}
+ggplot(df, aes(x = GrLivArea, y = SalePrice, color = MSSubClass)) +
+  geom_point() +
+  labs(title = "SalePrice vs GrLivArea in different MSSubClass",
+       subtitle = "MSSubClass: Identifies the type of dwelling involved in the sale.") 
+
+```
+
+This is further evidence that GrLivArea is a very important variable with regards to Sale Price, which makes sense as the larger a house, it should potentially be worth more.
+
+We'll create a new variable that adds up both the total area above ground and total area below ground to reflect Total Area of a House better.
+
+### 5.3 PoolQC
+
+There's only 7 data points that have a pool, but PoolQC has a high correlation with sale price. We'll create a hasPool variable to better reflect this information.
+
+```{r}
+df$hasPool <- ifelse(df$PoolQC == 'None', 0, 1)
+table(df$hasPool)
+```
+
+### 5.4 GarageType, GarageFinish, GarageQual, GarageCond
+
+We noticed that there are many variables surrounding Garage. We'll visualize and analyse them to see if any of them are describing the same things.
+
+```{r}
+a <- ggplot(df, aes(x=GarageType, y=SalePrice)) + geom_boxplot()
+b <- ggplot(df, aes(x=GarageFinish, y=SalePrice)) + geom_boxplot()
+c <- ggplot(df, aes(x=GarageQual, y=SalePrice)) + geom_boxplot()
+d <- ggplot(df, aes(x=GarageCond, y=SalePrice)) + geom_boxplot()
+
+grid.arrange(a, b, c, d)
+```
+
+We observe that the graphs of GarageType and GarageCond look very similar.
+
+```{r}
+chisq.test(table(df$GarageQual, df$GarageCond))
+```
+
+Using a Chi-squared test of independence on both of them, we observe a significant p-value, which indicates a high correlation with each other. 
+
+We'll take note of this instance of collinearity for our multi-regression model later on.
+
+### 5.5 TotalArea
+
+In this section, we create a new variable TotalArea to better reflect the total area (in square feet) of the house. We do this by summing up the above-ground living area, and the basement area.
+
+```{r}
+df$TotalArea <- df$GrLivArea + df$TotalBsmtSF
+
+ggplot(df, aes(x=TotalArea, y=SalePrice)) + 
+  geom_point(col='blue') + 
+  geom_smooth(method = "lm", se=FALSE, color="black", aes(group=1)) +
+  scale_y_continuous(breaks= seq(0, 800000, by=100000), labels = comma)
+```
+
+```{r}
+cor(df$GrLivArea, df$SalePrice)
+cor(df$TotalArea, df$SalePrice)
+```
+
+The correlation with Sale Price is even larger now. With the increased correlation, it also means the outliers are now more important. Let's see if they're the same outliers as we identified in our exploration with GrLivArea earlier.
+
+```{r}
+df[df$TotalArea > 7500, ]
+```
+
+The outliers are the same! Let's attempt to remove them and see how it affects the correlation.
+
+```{r}
+cor(df$SalePrice[-c(524, 1299)], df$TotalArea[-c(524, 1299)])
+```
+
+Removing the outliers actually increased the correlation by 5% to 82.9%. This is further evidence that these 2 outliers are true outliers. Although removing outliers may have an impact on a huge data set such as this, we'll keep things simple and remove them later on for more accurate results when conducting our prediction modelling.
+
+Now that we've extensively looked at the predictor variables, we'll now move on to pre-processing for our Prediction Modelling.
+
+## 6. Additional Data Preperation
+
+Prior to our prediction modelling, we'll need to preprocess our variables as per our exploratory and visualization phases. There are many variables that we would need to account for.
+
+### 6.2 Assigning new variables with observed explored relationship
+
+From our exploratory analysis, we discovered that OverallQual has a quadratic relationship with SalePrice, and Age has a square-root relationship with SalePrice. We'll add those variables accordingly.
+
+```{r}
+df$OverallQual2 <- df$OverallQual ^ 2
+df$Age2 <- df$Age ^ 0.5
+```
+
+### 6.3 Pre-processing variables from exploratory phase for multi-regression
+
+We introduced many variables in the previous sections. Let's go through them one by one. We'll be dropping similar variables in order to account for multi-collinearity, but only for multi-regression modelling. We'll keep all the variables for our other models.
+
+1. Age and isRemodelled
+
+We introduced Age by calculating the difference between YrSold and YearBuilt, as it is more informative than simply telling us when the house is sold and built.
+
+We introduced isRemodelled which is a 1 if a house has been remodelled before (YrBuilt != YearRemodAdd), and 0 if a house has not been remodelled before (YrBuilt == YearRemodAdd).
+
+**We can drop YrSold, YearBuilt, and YearRemodAdd.**
+
+2. LowQualFinSF
+
+Only 27 variables in the entire dataset have LowQualFinSF > 0. With such a small number, we determine that including this variable will not be useful as a predictor. LowQualFinSF also has a correlation of 0.017 only with SalePrice.
+
+**We can drop LowQualFinSf.**
+
+3. GrLivArea, X1stFlrSF, X2ndFlrSf.
+
+We determined that GrLivArea ia a sum of X1stFlrSF and X2ndFlrSF. We introduced a new variable has2ndFlr to take into account whether a house has a second storey or not.
+
+**We can drop X1stFlrSF and X2ndFlrSF.**
+
+4. TotalBsmtSF, BsmtFinSF1, BsmtFinSF2, BsmtUnfSF
+
+We determined that TotalBsmtSF = BsmtFinSF1 + BsmtFinSF2 + BsmtUnfSF.
+
+We introduced a new variable BsmtFinPct which is a percentage of basement that is finished. 
+
+**We can drop BsmtFinSF1, BsmtFinSF2, BsmtUnfSF.**
+
+5. Bathrooms
+
+We introduced a new variable TotalBaths which takes into account all the bathrooms in the house.
+
+**We can drop FullBath, HalfBath, BsmtFullBath, BsmtHalfBath.**
+
+6. Neighbourhoods
+
+We binned neighbourhoods into NghbrhdCat in attempt to reduce the degrees of freedom in Multi-regression
+
+**We can drop Neighborhood.**
+
+Referring to the correlation matrix in 4.2, there are instances of multicollinearity that we need to account for.
+
+7. TotRmsAbvGrd and GrLivArea
+
+GrLivArea is very similar to TotRmsAbvGrd and are highly correlated. 
+
+GrLivArea = area above ground in square feet
+TotRmsAbvGrd = rooms above ground
+
+**We'll drop TotRmsAbvGrd as GrLivArea is more correlated.**
+
+8. GarageCars and GarageArea
+
+Similar to 7, GarageCars and GarageArea describe the size of the garage in different terms.
+
+**We'll drop GarageArea as GarageCars is more correlated.**
+
+9. TotalArea, TotalBsmtSF, GrLivArea
+
+We created a new variable TotalArea to take the total living area space, which is more predictive of sale price than the individual broken down areas.
+
+We'll drop TotalBsmtSF, and keep TotalArea and GrLivArea so that we can determine the TotalBsmtSF with the two variables if needed. We're also keeping GrLivArea because it is highly correlated to SalePrice.
+
+**We can drop TotalBsmtSF, GrLivArea.**
+
+10. PoolQC
+
+**We will drop PoolQC as we will be using hasPool.**
+
+### 6.4 Ordering numeric variables by correlation
+
+Now that we've accounted for the variables that we explored in our exploratory phase, let's look at the rest of the numeric variables ordered by correlation.
+
+```{r}
+numVars <- df[,which(sapply(df, is.numeric))]
+numCors <- cor(numVars, use='pairwise.complete.obs')
+numCorsSorted <- sort(numCors[, 'SalePriceLog'], decreasing=TRUE)
+numCorsSorted
+```
+
+MiscVal looks very uncorrelated. We need to take a closer look at it and its corresponding categorical variable MiscFeature.
+
+#### 6.4.1 MiscVal and MiscFeature
+
+There are very few houses with miscellaneous features, 54 of them, which is 3.7% of the dataset. 
+
+MiscFeature also has a high correlation with saleprice - p = 0.006, so we reject the null hypothesis that sale price doesn't differ between different misc features.
+
+The ggplot also shows there's a clear difference in sale price.
+
+We conclude that we shouldn't remove MiscVal and MiscFeature.
+
+```{r}
+table(df$MiscFeature)
+summary(aov(SalePriceLog ~ MiscFeature, df))
+
+ggplot(df, aes(x=MiscFeature, y=SalePrice)) + geom_boxplot()
+```
+
+
+### 6.5 Replacing numeric NA's with 0's
+
+We'll also replace the NA's with 0, as our regression models are not able to take care of the NA's.
+
+```{r}
+# Replace all NAs in numerical variables with 0
+for (column in df %>% select_if(is.numeric) %>% names()) {
+    df[,column] <- df[,column] %>% replace_na(0)
+}
+```
+
+
+We created a new dataframe (df.mr) for use in multi-regression which accounts for the variable removing in 6.3.
+
+``` {r}
+toRemove <- c('YrSold', 'YearBuilt', 'YearRemodAdd', 'LowQualFinSF', 'X1stFlrSF', 'X2ndFlrSF', 'BsmtFinSF1', 'BsmtFinSF2', 'BsmtUnfSF', 'TotalBsmtSF', 'FullBath', 'HalfBath', 'BsmtFullBath', 'BsmtHalfBath', 'Neighborhood', 'GrLivArea', 'GarageArea', 'TotRmsAbvGrd','OpenPorchSF', 'WoodDeckSF', 'ScreenPorch', 'X3SsnPorch', 'EnclosedPorch')
+df.mr <- df[, !(names(df) %in% toRemove)]
+```
+
+We can now move on to our prediction modelling.
+
+## 7. Prediction Models
+
+### 7.1 Train/Test Split
+
+We'll split our dataset into train and test, with a 70/30 ratio.
+
+``` {r }
+set.seed(123) # Random seed
+
+trainSample <- sample(nrow(df), nrow(df) * 0.7) # 70% train 30% test
+
+traindf <- df[trainSample,]
+testdf <- df[-trainSample,]
+```
+
+
+### 7.2 Figuring out the importance of each variable with a simple exploratory RandomForest
+
+``` {r}
+df %>% names()
+set.seed(123)
+rf.fit <- randomForest(SalePriceLog ~ MSSubClass + MSZoning + LotFrontage + LotArea + Street + Alley + LotShape + 
+                         LandContour + LotConfig + LandSlope + Neighborhood + BldgType + 
+                         HouseStyle + OverallQual + OverallCond + YearBuilt + YearRemodAdd + RoofStyle + RoofMatl + 
+                         Exterior1st + MasVnrType + MasVnrArea + ExterQual + ExterCond + Foundation + 
+                         BsmtQual + BsmtCond + BsmtExposure + BsmtFinType1 + BsmtFinSF1 + BsmtFinType2 + BsmtFinSF2 + 
+                         BsmtUnfSF + TotalBsmtSF + Heating + HeatingQC + CentralAir + Electrical + X1stFlrSF + 
+                         X2ndFlrSF + LowQualFinSF + KitchenQual + TotRmsAbvGrd + Functional + Fireplaces + FireplaceQu + 
+                         GarageType + GarageYrBlt + GarageFinish + GarageCars + GarageArea + GarageQual + GarageCond + 
+                         PavedDrive + WoodDeckSF + OpenPorchSF + EnclosedPorch + X3SsnPorch + ScreenPorch + PoolArea + 
+                         Fence + MiscFeature + MiscVal + MoSold + YrSold + SaleType + 
+                         SaleCondition + isRemodelled + has2ndFlr + BsmtFinPct + TotalBaths + 
+                         hasArtery + hasFeedr + hasRRe + hasRRn + hasPos + TotalPorchSF + 
+                         hasPool + TotalArea + OverallQual2 + Age2,
+                       data = traindf, ntree = 500, mtry = 10, importance = TRUE)
+impt <- importance(rf.fit)
+impt <- impt[order(-impt[,1]),]
+impt
+```
+
+This section gives us a hint about the important variables that we should focus on. We listed all the variables by decreasing importance.
+
+TotalArea + LotArea + OverallQual2 + GarageCars + TotalBaths + Age2 + FireplaceQu + 
+KitchenQual + OverallCond + HouseStyle + GarageYrBlt + ExterQual + GarageType + Fireplaces + 
+BsmtFinPct + BedroomAbvGr + BldgType + BsmtQual + TotalPorchSF + MSZoning + Exterior1st + 
+BsmtFinType1 + MasVnrArea + GarageFinish + NghbrhdCat + Exterior2nd + HeatingQC + Foundation + 
+OpenPorchSF + LotShape + MasVnrType + WoodDeckSF + LotFrontage + has2ndFlr + GarageCond + 
+CentralAir + BsmtExposure + GarageQual + KitchenAbvGr + RoofStyle + SaleCondition + LandContour + 
+Alley + hasArtery + LandSlope + ScreenPorch + Functional + BsmtCond + PavedDrive + 
+isRemodelled + hasFeedr + Fence + LotConfig + SaleType + MoSold + hasPos + 
+BsmtFinType2 + MiscVal + Street + EnclosedPorch + X3SsnPorch + ExterCond + Electrical + 
+hasRRe + MiscFeature + Heating + PoolArea + PoolQC + hasRRn + hasPool
+
+
+### 7.4 Dataframe of results
+
+we initialise a dataframe to store the accuracy and error results of our prediction modelling.
+
+``` {r}
+results <- data.frame("Method" = character(),
+                      "Train_R2" = numeric(), 
+                       "Test_R2" = numeric(), 
+                       "Train_RMSLE" = numeric(), 
+                       "Test_RMSLE" = numeric(), 
+                       stringsAsFactors=FALSE) 
+```
+
+### 7.5 Multi-regression
+
+The first model that we'll be looking at will be multi-regression, which is a linear regression with multiple variables.
+
+We ran the multi-regression model iteratively, removing insignificant variables one by one until all variables are significant.
+
+
+``` {r}
+df %>% select_if(is.numeric) %>% names()
+
+mr.fit <-lm(SalePriceLog ~  LotArea + I(OverallQual ^ 2) + OverallCond +
+              Fireplaces + GarageYrBlt + PoolArea + NghbrhdCat +
+              TotalBaths + TotalArea  + I(Age ^ 0.5) + TotalPorchSF + hasPool + hasArtery + hasRRe,
+            traindf)
+
+summary(mr.fit)
+
+results <- rbind(results, data.frame("Method" = "Multi-regression",
+                                     "Train_R2" = 
+                                       mmetric(traindf$SalePrice, predict(mr.fit, traindf) %>% exp(), "R2"),
+                                     "Test_R2" = 
+                                       mmetric(testdf$SalePrice, predict(mr.fit, testdf) %>% exp(), "R2"),
+                                     "Train_RMSLE" = 
+                                       RMSLE(predict(mr.fit, traindf) %>% exp(),traindf$SalePrice),
+                                     "Test_RMSLE" = 
+                                       RMSLE(predict(mr.fit, testdf) %>% exp(),testdf$SalePrice)))
+
+paste0("Train R2: ",mmetric(traindf$SalePrice, predict(mr.fit, traindf) %>% exp(),"R2") %>% as.numeric())
+paste0("Test R2: ",mmetric(testdf$SalePrice, predict(mr.fit, testdf) %>% exp(),"R2") %>% as.numeric())
+paste0("Test RMSLE: ",RMSLE(predict(mr.fit, testdf) %>% exp(),testdf$SalePrice))
+paste0("Train RMSLE: ",RMSLE(predict(mr.fit, traindf) %>% exp(),traindf$SalePrice))
+```
+
+
+### 7.6 Regression Tree
+
+The next model we'll be looking at will be the Regression Tree.
+
+``` {r }
+# Cut off increasing %IncMS of 1%
+
+impt[impt[,1] > 1,] %>% row.names()
+
+rg.fit <- ctree(SalePriceLog ~ TotalArea + LotArea + OverallQual2 + GarageCars + TotalBaths + Age2 + FireplaceQu + 
+                  KitchenQual + OverallCond + HouseStyle + GarageYrBlt + ExterQual + GarageType + Fireplaces + 
+                  BsmtFinPct + BedroomAbvGr + BldgType + BsmtQual + MSZoning + Exterior1st + 
+                  BsmtFinType1 + MasVnrArea + GarageFinish + NghbrhdCat + Exterior2nd + HeatingQC + Foundation + 
+                  OpenPorchSF + LotShape + MasVnrType + WoodDeckSF + LotFrontage + has2ndFlr + GarageCond + 
+                  CentralAir + BsmtExposure + GarageQual + KitchenAbvGr + RoofStyle + SaleCondition + LandContour + 
+                  Alley + hasArtery + LandSlope + ScreenPorch + Functional + BsmtCond + PavedDrive + 
+                  isRemodelled + hasFeedr + Fence + LotConfig + SaleType + MoSold + hasPos,
+                data = traindf)
+
+plot(rg.fit, main="Conditional Inference Tree for SalePriceLog")
+
+results <- rbind(results, data.frame("Method" = "Regression Tree",
+                                     "Train_R2" = 
+                                       mmetric(traindf$SalePrice, predict(rg.fit, traindf) %>% exp(), "R2") %>% as.numeric(),
+                                     "Test_R2" = 
+                                       mmetric(testdf$SalePrice, predict(rg.fit, testdf) %>% exp(), "R2") %>% as.numeric(),
+                                     "Train_RMSLE" = 
+                                       RMSLE(predict(rg.fit, traindf) %>% exp(),traindf$SalePrice),
+                                     "Test_RMSLE" = 
+                                       RMSLE(predict(rg.fit, testdf) %>% exp(),testdf$SalePrice)))
+
+paste0("Train R2: ",mmetric(traindf$SalePrice, predict(rg.fit, traindf) %>% exp(),"R2") %>% as.numeric())
+paste0("Test R2: ",mmetric(testdf$SalePrice, predict(rg.fit, testdf) %>% exp(),"R2") %>% as.numeric())
+paste0("Train RMSLE: ",RMSLE(predict(rg.fit, traindf) %>% exp(),traindf$SalePrice))
+paste0("Test RMSLE: ",RMSLE(predict(rg.fit, testdf) %>% exp(),testdf$SalePrice))
+```
+
+
+### 7.7 Random Forest
+
+For the next few classification tree models, we will be using the caret package to train our data.  
+
+As such, we will set our model parameters as per below. Due to the constraints of time and the large amount of time required to knit the markdown worksheet, we will restrict our trainControl to an ordinary 5-fold cross validation.
+
+The classification tree algorithm has the potential to be a lot more robust if we were to use method = "repeatedcv" as per commented below. "repeatedcv" will repeatedly performing the cross-fold validation a specified number of times and display the average of the error terms, and thus results in a higher accuracy.
+
+``` {r}
+# Seting default parameters
+control <- trainControl(method = "repeatedcv", number = 10, repeats = 3, allowParallel =T) 
+#control <- trainControl(method = "cv", number = 5) # ordinary 5 fold CV
+mtry <- sqrt(ncol(df))
+tunegrid <- expand.grid(.mtry=mtry)
+```
+
+``` {r }
+set.seed(123)
+rf.fit <- train(SalePriceLog ~ TotalArea + OverallQual2 + LotArea + TotalBaths + FireplaceQu + Age2 + GarageYrBlt + 
+                      GarageCars + KitchenQual + Fireplaces + TotalPorchSF + ExterQual + OverallCond + NghbrhdCat + 
+                      HouseStyle + GarageFinish + GarageType + MSZoning + BedroomAbvGr + BsmtFinType1 + BsmtFinPct + 
+                      BldgType + BsmtQual + Exterior1st + Foundation + OpenPorchSF + CentralAir + has2ndFlr + 
+                      BsmtExposure + MasVnrType + MasVnrArea + LotFrontage + GarageQual + LotShape + Exterior1st + 
+                      WoodDeckSF + HeatingQC + GarageCond + KitchenAbvGr + LandContour + MoSold + Functional + 
+                      BsmtCond + RoofStyle + Fence + ScreenPorch + PavedDrive + LandSlope + LotConfig + 
+                      isRemodelled + SaleCondition + Street + hasPos,
+                    data = traindf, method = "rf", tunegrid = tunegrid, trControl = control)
+
+print(rf.fit)
+
+results <- rbind(results, data.frame("Method" = "Regression Forest",
+                                     "Train_R2" = 
+                                       mmetric(traindf$SalePrice, predict(rf.fit, traindf) %>% exp(), "R2") %>% as.numeric(),
+                                     "Test_R2" = 
+                                       mmetric(testdf$SalePrice, predict(rf.fit, testdf) %>% exp(), "R2") %>% as.numeric(),
+                                     "Train_RMSLE" = 
+                                       RMSLE(predict(rf.fit, traindf) %>% exp(),traindf$SalePrice),
+                                     "Test_RMSLE" = 
+                                       RMSLE(predict(rf.fit, testdf) %>% exp(),testdf$SalePrice)))
+
+paste0("Train R2: ",mmetric(traindf$SalePrice, predict(rf.fit, traindf) %>% exp(),"R2") %>% as.numeric())
+paste0("Test R2: ",mmetric(testdf$SalePrice, predict(rf.fit, testdf) %>% exp(),"R2") %>% as.numeric())
+paste0("Train RMSLE: ",RMSLE(predict(rf.fit, traindf) %>% exp(),traindf$SalePrice))
+paste0("Test RMSLE: ",RMSLE(predict(rf.fit, testdf) %>% exp(),testdf$SalePrice))
+```
+
+### 7.8 Extreme Gradient Boosting
+
+Extreme gradient boosting (XGBoost) allows for the computation of second order gradients, such as quadratic relationships. As such, we shall re-use the original Age and Quality instead of Age2 and Quality2 to allow the XGBoost algorithm to work its magic.
+
+``` {r}
+set.seed(123)
+control <- trainControl(method = "repeatedcv", number = 10, repeats = 3, allowParallel = T)
+#control <- trainControl(method = "cv", number = 5)
+xgb.grid <- expand.grid(nrounds = 100,
+                        max_depth = 6,
+                        eta = 0.3,
+                        gamma = 0,
+                        colsample_bytree = 1,
+                        min_child_weight = 1,
+                        subsample = 1)
+
+xgb.fit <- train(SalePriceLog ~ MSZoning + LotFrontage  + LotArea  + Street  + Alley  + LotShape  + LandContour  +
+                  LotConfig  + LandSlope + BldgType  + HouseStyle  + OverallQual + OverallCond  + RoofStyle  +
+                  Exterior1st + Exterior2nd + MasVnrType  + MasVnrArea  + ExterQual  + ExterCond  + Foundation  +
+                  BsmtQual  + BsmtCond  + BsmtExposure  + BsmtFinType1  + BsmtFinType2  + Heating  + HeatingQC  +
+                  CentralAir  + Electrical  + BedroomAbvGr  + KitchenAbvGr  + KitchenQual  + Functional  + 
+                  Fireplaces  + FireplaceQu  + GarageType  +GarageYrBlt  + GarageFinish  + GarageCars  +
+                  GarageQual  + GarageCond  + PavedDrive  + WoodDeckSF  + OpenPorchSF  + EnclosedPorch +
+                  X3SsnPorch  + ScreenPorch  + PoolArea  + Fence  + MiscFeature  + MiscVal + MoSold +
+                  SaleType  + SaleCondition  + Age + isRemodelled  + has2ndFlr + BsmtFinPct  + TotalBaths  +
+                  Neighborhood  + TotalArea  +  hasPool +
+                  hasArtery + hasFeedr + hasRRe + hasRRn + hasPos,
+                data = traindf, method = "xgbTree", tunegrid = xgb.grid, trControl = control)
+
+print(xgb.fit)
+results <- rbind(results, data.frame("Method" = "XGBoost",
+                                     "Train_R2" = 
+                                       mmetric(traindf$SalePrice, predict(xgb.fit, traindf) %>% exp(), "R2") %>% as.numeric(),
+                                     "Test_R2" = 
+                                       mmetric(testdf$SalePrice, predict(xgb.fit, testdf) %>% exp(), "R2") %>% as.numeric(),
+                                     "Train_RMSLE" = 
+                                       RMSLE(predict(xgb.fit, traindf) %>% exp(),traindf$SalePrice),
+                                     "Test_RMSLE" = 
+                                       RMSLE(predict(xgb.fit, testdf) %>% exp(),testdf$SalePrice)))
+
+paste0("Train R2: ",mmetric(traindf$SalePrice, predict(xgb.fit, traindf) %>% exp(),"R2") %>% as.numeric())
+paste0("Test R2: ",mmetric(testdf$SalePrice, predict(xgb.fit, testdf) %>% exp(),"R2") %>% as.numeric())
+paste0("Train RMSLE: ",RMSLE(predict(xgb.fit, traindf) %>% exp(),traindf$SalePrice))
+paste0("Test RMSLE: ",RMSLE(predict(xgb.fit, testdf) %>% exp(),testdf$SalePrice))
+
+```
+
+
+## 8. Model Evaluation
+
+After creating and testing our models, we will now evaluate them based on their accuracy and error rate.
+
+### 8.1 Comparison of results
+
+``` {r}
+results
+```
+
+Out of all the models, our Extreme Gradient Boosting model displays the highest R-squared value on our test set, as well as the lowest RMSLE value.
+  
+#### 8.1.1 Results: Multi-regression
+
+Surprisingly, our Test_R2 for multi-regression exceeds that of Train_R2 quite significantly, by about 10%. Despite the good performance of the model's Test_R2, our group feels that the poor performance of the Train_R2 is also indicative of the model's overall performance. The high Test_R2 could be a fluke due to a discrepancy in the test data set, where the data points in the test set fit the model nicely. 
+
+
+#### 8.1.2 Results: Regression Tree
+
+For our Regression Tree model, our group only used variables that contributed more than 1% of %incMSE to the model from an initial importance test. In layman terms, it means we're only picking out the important variables which contribute more than 1% in change of out-of-bag mean squared error. 
+
+Our default settings: 
+  
+  mincriterion (confidence level) = 0.95  
+  minsplit (minimum sum of weights in node to be considered for splitting) = 20  
+  minbucket (minimum sum of weights in terminal node) = 7  
+  
+From our results, we can see that there is a slight overfitting judging by the higher Train_R2 as compared to the Test_R2. Our group feels that this amount of overfitting is small enough to be acceptable, as further pruning might lower the model complexity.
+
+
+#### 8.1.3 Results: Regression Forest
+
+Our regression forest model shows a relatively high amount of overfitting judging by the large difference in R2 between the train and test sets (7%). This shows that the random forest algorithm, despite having an inbuilt cross validation system, might still tend to overfit to the overall train set.  
+  
+
+### 8.1.4 Results: XGBoost
+
+Our extreme gradient boosting (XGBoost) model performed the best with the highest Test_R2, despite showing slight overfitting in the train set. Gradient boosting algorithms tend to perform better than the random forest algorithm because instead of a voting system for the optimal tree (which is the focus of Random Forest), Gradient Boosting focuses on improving the model's coefficients and accuracy by optimising its loss function (which compares between the actual sale price and the predicted sale price).
+  
+
+## 9. Scenario Testing
+
+In this portion, we will run our model through a hypothetical scenerio to assess our model's usefulness in real-life.
+
+
+**Scenario** 
+
+In our scenario, we are a real estate trader in charge of buying property for the company and we have a list of houses available to us, containing all information except for the price sold (SalePrice). 
+
+We will assume the SalePrice is the price the seller will be willing to sell to us (SellPrice), and our predicted SalePrice values represent our initial quote (QuotePrice).
+
+Our goal is to minimise total expected loss.
+
+If our initial quote is lower than the seller's SellPrice, then we will have to spend a amount of time proportional to the difference between the prices to successfully bargain down the SellPrice to my QuotePrice. This time spent will be subject to an opportunity cost dependant on our opportunity cost of time per hour (moneyPerHour).
+
+However, if our initial quote price is higher than the seller's SellPrice, then then there will be no time wasted and the sale processes automatically. But, the company would incur a percentage of monetary loss (underquotePenalty) equal to this difference in price.
+
+### 9.1 Function to simulate and calculate expected loss
+
+``` {r}
+moneyPerHour <- 100 # opportunity cost of time per hour
+underquotePenalty <- 0.01 # 1% penalty
+
+# Function to generate ExpectedLoss and TimeSpent for each fit
+simulate <- function(fit, testdf, moneyPerHour = 100, underquotePenalty = 0.01) {
+  a <- testdf %>% select(SalePrice)
+  names(a) <- c("SellPrice")
+  
+  # Quote Price equals to our predicted price
+  a$QuotePrice <- predict(fit, testdf) %>% exp()
+  
+  # Difference between the quote price and sell price, in numbers and %
+  a$Diff <- a$QuotePrice - a$SellPrice
+  a$DiffPct <- a$Diff / a$SellPrice
+  
+  # Time spent: 10 bins from minimum 30 minutes to maximum 300 minutes
+  a$TimeSpent <- findInterval(a$DiffPct, c(seq(0,9))* 0.1) * 30
+  
+  # Expected loss based on the difference in price
+  a$ExpectedLoss <- a$TimeSpent / 60 * moneyPerHour + ifelse(a$Diff < 0, a$Diff * underquotePenalty * -1, 0)
+  
+  return(a)
+}
+
+# Example Simulate for xgb.fit
+simulate(xgb.fit, testdf, moneyPerHour, underquotePenalty) %>% head(20)
+```
+
+
+### 9.2 Function to generate and aggregate the losses and time spent from all our prediction models
+
+``` {r}
+genSimResults <- function(mr.fit, rg.fit, rf.fit, xgb.fit, moneyPerHour = 100, underquotePenalty = 0.01) {
+  mr.sim <- simulate(mr.fit, testdf, moneyPerHour, underquotePenalty)
+  rg.sim <- simulate(rg.fit, testdf, moneyPerHour, underquotePenalty)
+  rf.sim <- simulate(rf.fit, testdf, moneyPerHour, underquotePenalty)
+  xgb.sim <- simulate(xgb.fit, testdf, moneyPerHour, underquotePenalty)
+  simResults <- data.frame(
+    "MeanTimeSpent" = c(
+      mr.sim %>% select(TimeSpent) %>% sapply(mean) %>% as.numeric(), 
+      rg.sim %>% select(TimeSpent) %>% sapply(mean) %>% as.numeric(), 
+      rf.sim %>% select(TimeSpent) %>% sapply(mean) %>% as.numeric(), 
+      xgb.sim %>% select(TimeSpent) %>% sapply(mean) %>% as.numeric()),
+    "SDTimeSpent" = c(
+      mr.sim %>% select(TimeSpent) %>% sapply(sd) %>% as.numeric(), 
+      rg.sim %>% select(TimeSpent) %>% sapply(sd) %>% as.numeric(), 
+      rf.sim %>% select(TimeSpent) %>% sapply(sd) %>% as.numeric(), 
+      xgb.sim %>% select(TimeSpent) %>% sapply(sd) %>% as.numeric()),
+    "MeanExpectedLoss" = c(
+      mr.sim %>% select(ExpectedLoss) %>% sapply(mean) %>% as.numeric(), 
+      rg.sim %>% select(ExpectedLoss) %>% sapply(mean) %>% as.numeric(), 
+      rf.sim %>% select(ExpectedLoss) %>% sapply(mean) %>% as.numeric(), 
+      xgb.sim %>% select(ExpectedLoss) %>% sapply(mean) %>% as.numeric()),
+    "SDExpectedLoss" = c(
+      mr.sim %>% select(ExpectedLoss) %>% sapply(sd) %>% as.numeric(), 
+      rg.sim %>% select(ExpectedLoss) %>% sapply(sd) %>% as.numeric(), 
+      rf.sim %>% select(ExpectedLoss) %>% sapply(sd) %>% as.numeric(), 
+      xgb.sim %>% select(ExpectedLoss) %>% sapply(sd) %>% as.numeric()),
+    row.names = c('MR', 'Tree', 'Forest', 'XGB'))
+  return(simResults)
+}
+genSimResults(mr.fit, rg.fit, rf.fit, xgb.fit, 100, 0.1)
+```
+
+As can be seen in the results, the expected loss seems to be quite dependent on the accuracy of our models on the test set, with XGBoost producing the minimum expected loss numbers.
+
+MeanExpectedLoss and SDExpectedLoss is the lowest for the XGBoost model. Standard deviation for time spent is also the lowest. However, the Random Forest Model has a lower mean time spent. 
+
+In conclusion, looking at the mean expected loss, we can conlude that the XGBoost model outperformed significantly.
+
+
+## 10. Limitations
+
+In this section, we evaluate and reflect on the limitations of our models and the dataset.
+
+### 10.1 Limited timeframe of dataset
+
+The dataset we used only contained houses from 2006 to 2010. As such, prediction results are realistically only relevant for at most 2005 - 2012.  it will definitely be more advisable for us to train our models using a set of more updated data before we apply them into our future business models.
+
+
+### 10.2 Lack of integration with real-estate price indicators
+
+Our models rely solely on the data provided to us by Kaggle, but in reality, real-estate prices correlate with interest rates, since low interest rates spur consumers to take up mortgages and buy houses, and vice versa for the case of high interest rates. 
+
+To account for this, our group has attempted to make use of US Treasury Bills' interest rates of different maturity dates, but we found that they have very little correlation with the SalePrice in the dataset, and hence we did not include them in our model.
+
+
+### 10.3 Sensitivity to economic and world issues
+
+Real estate prices fluctuate based on economic events and world events, which both us and our models are not able to predict. We'll need to constantly monitor the world news and economic news, and update the dataset and the models if we were to use them in a real-life scenario.
+
+
+## 11. Conclusion
+
+In conclusion, our group finds the Extreme Gradient Boosting model to be the best-performing model as compared to the our Multi-regression, Regression Tree, and Random Forest model.
+
+The XGBoost model outperformed the other 3 models based on R-squared, RMSLE, and even our in our scenario testing to evaluate the models' efficiency and performance.
+
+Although our XGBoost model displays a high accuracy in predicting sale prices, our group finds that there are various limitations with the dataset, as well as the real-life real estate market that affects the model's actual performance and application in real-life scenarios. Hence, the model should only really be used to predict housing sale prices around 2005 - 2012, and only for the town of Iowa. Our group cannot guarantee the model's performance for other timeframes and other cities.
