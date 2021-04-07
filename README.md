@@ -1,4 +1,4 @@
-# R-Codes
+# Data Science Projects
 A collection of codes in R used in school projects
 
 Instructions are provided as comments in code, with example parameters.  
